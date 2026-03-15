@@ -1,0 +1,6 @@
+customtkinter
+more_itertools
+numpy
+pyserial
+fastcrc
+usbx
