@@ -109,6 +109,8 @@ class Hexapod:
         self.start_us = time.perf_counter_ns() // 1000
         self.packet = Packet()
         self.recorder = TelemetryRecorder()
+        self._info_buffer = bytearray()
+        self._info_expected_seq: int | None = None
 
     def micros(self) -> int:
         return (time.perf_counter_ns() // 1000) - self.start_us
@@ -122,7 +124,12 @@ class Hexapod:
         return self.port.is_open
 
     def set_port(self, port: str) -> None:
-        self.port.port = port
+        if not port:
+            self.log.warning("[set_port] Invalid port: '%s'", port)
+            return
+
+        if port != self.portStr:
+            self.port.port = port
 
     def connect(self) -> None:
         if self.is_connected:
@@ -134,6 +141,15 @@ class Hexapod:
 
         try:
             self.port.open()
+        except serial.SerialException as exc:
+            msg = str(exc).lower()
+            if "filenotfounderror" in msg or "cannot find the file" in msg:
+                self.log.error("[connect] Port %s was not found. Check cable/device and selected COM port.", self.portStr)
+            elif "permissionerror" in msg or "access is denied" in msg:
+                self.log.error("[connect] Port %s is busy or access denied. Close other apps using this COM port.", self.portStr)
+            else:
+                self.log.error("[connect] Could not open %s: %s", self.portStr, exc)
+            return
         except Exception:
             self.log.exception("[connect] Error connecting to %s", self.portStr)
             return
@@ -157,6 +173,15 @@ class Hexapod:
                 self.byteBuffer.extend(data)
                 self._consume_packets()
 
+        except serial.SerialException as exc:
+            # Typical when device is unplugged or disappears while reading.
+            self.log.warning("[run] Serial link lost (%s)", exc)
+            self.listen.clear()
+            if self.port.is_open:
+                try:
+                    self.port.close()
+                except Exception:
+                    self.log.debug("[run] close after disconnect failed", exc_info=True)
         except Exception:
             self.log.exception("[run] listener crashed")
         finally:
@@ -185,11 +210,45 @@ class Hexapod:
             del self.byteBuffer[:PACKET_SIZE]
             self.process_packet(candidate)
 
+    def _reset_info_assembly(self) -> None:
+        self._info_buffer.clear()
+        self._info_expected_seq = None
+
+    def _handle_info_packet(self, pkt: bytes) -> str | None:
+        seq = pkt[3]
+        more = pkt[5] != 0
+        payload = pkt[6:61]  # bytes 6..60 (55-byte INFO fragment)
+
+        if self._info_expected_seq is not None and seq != self._info_expected_seq:
+            self.log.warning(
+                "[recv] INFO sequence gap (expected=%d got=%d), restarting assembly",
+                self._info_expected_seq,
+                seq,
+            )
+            self._reset_info_assembly()
+
+        nul_idx = payload.find(0)
+        chunk = payload if nul_idx < 0 else payload[:nul_idx]
+        self._info_buffer.extend(chunk)
+
+        if more:
+            self._info_expected_seq = (seq + 1) & 0xFF
+            return None
+
+        msg = self._info_buffer.decode(errors="ignore")
+        self._reset_info_assembly()
+        return msg
+
     def process_packet(self, pkt: bytes) -> None:
         msgid = pkt[4]
 
         if self.recorder.recording:
             self.recorder.write(pkt)
+
+        if msgid == MSGID_INFO:
+            msg = self._handle_info_packet(pkt)
+            if msg is not None:
+                self.log.info("[recv] INFO: %s", msg)
 
 
 

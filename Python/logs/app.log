@@ -1,0 +1,24 @@
+2026-03-15 04:07:12,966 INFO app_process [AppProcess/MainThread]: [run_app] application closed
+2026-03-15 05:32:38,613 INFO app_process [AppProcess/MainThread]: [run_app] application closed
+2026-03-15 05:34:08,164 INFO app_process [AppProcess/MainThread]: [run_app] application closed
+2026-03-15 05:34:54,165 INFO app_process [AppProcess/MainThread]: [run_app] application closed
+2026-03-15 05:35:25,670 INFO app_process [AppProcess/MainThread]: [run_app] application closed
+2026-03-15 05:39:12,399 INFO app_process [AppProcess/MainThread]: [run_app] application closed
+2026-03-15 18:37:03,117 INFO app_process [AppProcess/MainThread]: [run_app] application closed
+2026-03-15 18:37:27,347 INFO app_process [AppProcess/MainThread]: [run_app] application closed
+2026-03-15 18:58:49,842 ERROR app_process [AppProcess/MainThread]: [run_app] crashed
+Traceback (most recent call last):
+  File "C:\Users\james\OneDrive\Desktop\LLMS\Python\main.py", line 42, in run_app
+    App(conn=conn).run()
+    ^^^^^^^^^^^^^^
+  File "C:\Users\james\OneDrive\Desktop\LLMS\Python\ui.py", line 39, in __init__
+    self.update_port_list()
+  File "C:\Users\james\OneDrive\Desktop\LLMS\Python\ui.py", line 153, in update_port_list
+    self.port_list.set(ports[0])
+                       ~~~~~^^^
+IndexError: list index out of range
+2026-03-15 19:02:24,128 INFO app_process [AppProcess/MainThread]: [run_app] application closed
+2026-03-15 19:03:55,878 INFO app_process [AppProcess/MainThread]: [run_app] application closed
+2026-03-15 19:08:29,437 INFO app_process [AppProcess/MainThread]: [run_app] application closed
+2026-03-15 19:08:44,655 INFO app_process [AppProcess/MainThread]: [run_app] application closed
+2026-03-15 19:23:39,232 INFO app_process [AppProcess/MainThread]: [run_app] application closed

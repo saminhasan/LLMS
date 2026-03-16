@@ -137,8 +137,6 @@ class SerialServer:
         try:
             while self.running:
                 time.sleep(0.1)
-                # Optional heartbeat:
-                # self._safe_send({"STATUS": "RUNNING"})
         except KeyboardInterrupt:
             self.log.info("[run] KeyboardInterrupt -> stopping")
             self.running = False

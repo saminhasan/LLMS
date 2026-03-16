@@ -7,19 +7,24 @@ from serial.tools import list_ports, list_ports_common
 
 from numpy import deg2rad, float32, ones, clip
 
+from pathlib import Path
+
+base_dir = Path(__file__).resolve().parent
+traj_dir = base_dir / "Trajectories"
+
+
 WIDTH, HEIGHT = 800, 480
 
 # Teensy 4.1  VID/PID. Add more PIDs if needed.
 TEENSY_VID = 0x16C0
 TEENSY_PIDS = {0x0483}
 
-def portList() -> list[list_ports_common.ListPortInfo]:
+def portList() -> list[list_ports_common.ListPortInfo]: #can optional return empty list
     return [p for p in list_ports.comports() if getattr(p, "vid", None) == TEENSY_VID and getattr(p, "pid", None) in TEENSY_PIDS]
 
 def is_teensy_usb(dev: Device) -> bool:
     return dev.vid == TEENSY_VID and dev.pid in TEENSY_PIDS
 
-# ui must sanitize all values and stuff before sending to backend
 
 
 class App(ctk.CTk):
@@ -34,7 +39,7 @@ class App(ctk.CTk):
         # usbx hotplug (callbacks run on background thread; bounce into UI thread)
         usb.on_connected(self._usb_connected)
         usb.on_disconnected(self._usb_disconnected)
-        usb.start_monitor()  # Start the USB monitoring thread
+        usb.start_monitor() # type:ignore  # Start the USB monitoring thread
 
 
         self.update_port_list()
@@ -66,109 +71,78 @@ class App(ctk.CTk):
         self.port_list = ctk.CTkOptionMenu(
             self,
             values=[p.device for p in portList()] or ["No Devices"],
-            command=lambda port: self.button_callback({"PORT": port}, app=self),
+            command=lambda port: self.button_callback({"PORT": port}, ),
         )
-        self.port_list.grid(
-            row=0, column=0, columnspan=2, padx=(20, 10), pady=(20, 10), sticky="ew"
-        )
+        self.port_list.grid(row=0, column=0, columnspan=2, padx=(20, 10), pady=(20, 10), sticky="ew")
 
         self.connect_button = ctk.CTkButton(
             self,
             text="CONNECT",
-            command=lambda: self.button_callback({"CONNECT": self.port_list.get()}, app=self),
+            command=lambda: self.button_callback({"CONNECT": self.port_list.get()}, ),
         )
-        self.connect_button.grid(
-            row=0, column=2, padx=(10, 10), pady=(20, 10), sticky="nsew"
-        )
+        self.connect_button.grid(row=0, column=2, padx=(10, 10), pady=(20, 10), sticky="nsew")
 
         self.disconnect_button = ctk.CTkButton(
             self,
             text="DISCONNECT",
-            command=lambda: self.button_callback({"DISCONNECT": self.port_list.get()}, app=self),
+            command=lambda: self.button_callback({"DISCONNECT": self.port_list.get()}, ),
         )
-        self.disconnect_button.grid(
-            row=0, column=3, padx=(10, 20), pady=(20, 10), sticky="nsew"
-        )
+        self.disconnect_button.grid(row=0, column=3, padx=(10, 20), pady=(20, 10), sticky="nsew")
 
         self.enable_button = ctk.CTkButton(
-            self, text="ENABLE", command=lambda: self.button_callback({"ENABLE": None}, app=self)
+            self, text="ENABLE", command=lambda: self.button_callback({"ENABLE": None}, )
         )
-        self.enable_button.grid(
-            row=1, column=0, columnspan=2, padx=(20, 10), pady=(10, 10), sticky="nsew"
-        )
+        self.enable_button.grid(row=1, column=0, columnspan=2, padx=(20, 10), pady=(10, 10), sticky="nsew")
 
         self.disable_button = ctk.CTkButton(
-            self, text="DISABLE", command=lambda: self.button_callback({"DISABLE": None}, app=self)
+            self, text="DISABLE", command=lambda: self.button_callback({"DISABLE": None}, )
         )
-        self.disable_button.grid(
-            row=1, column=2, columnspan=2, padx=(10, 20), pady=(10, 10), sticky="nsew"
-        )
+        self.disable_button.grid(row=1, column=2, columnspan=2, padx=(10, 20), pady=(10, 10), sticky="nsew")
 
         self.upload_button = ctk.CTkButton(
-            self, text="UPLOAD", command=lambda: self.button_callback({"UPLOAD": None}, app=self)
+            self, text="UPLOAD", command=lambda: self.button_callback({"UPLOAD": None}, )
         )
-        self.upload_button.grid(
-            row=2, column=0, columnspan=2, padx=(20, 10), pady=(10, 10), sticky="nsew"
-        )
+        self.upload_button.grid(row=2, column=0, columnspan=2, padx=(20, 10), pady=(10, 10), sticky="nsew")
 
-        self.calibrate_button = ctk.CTkButton(
-            self, text="CALIBRATE", command=lambda: self.button_callback({"CALIBRATE": None}, app=self)
+        self.calibrate_button = ctk.CTkButton(self, text="CALIBRATE", command=lambda: self.button_callback({"CALIBRATE": None}, )
         )
-        self.calibrate_button.grid(
-            row=2, column=2, columnspan=2, padx=(10, 20), pady=(10, 10), sticky="nsew"
-        )
+        self.calibrate_button.grid(row=2, column=2, columnspan=2, padx=(10, 20), pady=(10, 10), sticky="nsew")
 
         self.stage_button = ctk.CTkButton(
-            self, text="STAGE", command=lambda: self.button_callback({"STAGE": None}, app=self)
+            self, text="STAGE", command=lambda: self.button_callback({"STAGE": None}, )
         )
-        self.stage_button.grid(
-            row=3, column=0, columnspan=2, padx=(20, 10), pady=(10, 10), sticky="nsew"
-        )
+        self.stage_button.grid(row=3, column=0, columnspan=2, padx=(20, 10), pady=(10, 10), sticky="nsew")
 
         self.park_button = ctk.CTkButton(
-            self, text="PARK", command=lambda: self.button_callback({"PARK": None}, app=self)
+            self, text="PARK", command=lambda: self.button_callback({"PARK": None}, )
         )
-        self.park_button.grid(
-            row=3, column=2, columnspan=2, padx=(10, 20), pady=(10, 10), sticky="nsew"
-        )
+        self.park_button.grid(row=3, column=2, columnspan=2, padx=(10, 20), pady=(10, 10), sticky="nsew")
 
         self.player = ctk.CTkSegmentedButton(
             self,
             values=["PLAY", "PAUSE", "STOP"],
-            command=lambda choice: self.button_callback({choice: None}, app=self),
+            command=lambda choice: self.button_callback({choice: None}, ),
         )
-        self.player.grid(
-            row=4, column=0, columnspan=4, padx=(20, 20), pady=(10, 10), sticky="nsew"
-        )
+        self.player.grid(row=4, column=0, columnspan=4, padx=(20, 20), pady=(10, 10), sticky="nsew")
 
-        self.estop_button = ctk.CTkButton(
-            self, text="ESTOP", command=lambda: self.button_callback({"ESTOP": None}, app=self)
-        )
-        self.estop_button.grid(
-            row=5, column=0, columnspan=3, rowspan=2, padx=(20, 10), pady=(10, 10), sticky="nsew"
-        )
+        self.estop_button = ctk.CTkButton(self, text="ESTOP", command=lambda: self.button_callback({"ESTOP": None}, ))
+        self.estop_button.grid(row=5, column=0, columnspan=3, rowspan=2, padx=(20, 10), pady=(10, 10), sticky="nsew")
 
         self.reset_button = ctk.CTkButton(
-            self, text="RESET", command=lambda: self.button_callback({"RESET": None}, app=self)
+            self, text="RESET", command=lambda: self.button_callback({"RESET": None}, )
         )
-        self.reset_button.grid(
-            row=5, column=3, rowspan=2, padx=(10, 20), pady=(10, 10), sticky="nsew"
-        )
+        self.reset_button.grid(row=5, column=3, rowspan=2, padx=(10, 20), pady=(10, 10), sticky="nsew")
 
         self.input_field = ctk.CTkEntry(self, placeholder_text="")
-        self.input_field.grid(
-            row=7, column=0, columnspan=3, padx=(20, 10), pady=(10, 20), sticky="nsew"
-        )
-        self.input_field.bind("<Return>", lambda _e: self.button_callback({"SEND": self.input_field.get()}, app=self))
+        self.input_field.grid(row=7, column=0, columnspan=3, padx=(20, 10), pady=(10, 20), sticky="nsew")
+        self.input_field.bind("<Return>", lambda _e: self.button_callback({"SEND": self.input_field.get()}, ))
 
         self.send_button = ctk.CTkButton(
-            self, text="SEND", command=lambda: self.button_callback({"SEND": self.input_field.get()}, app=self)
+            self, text="SEND", command=lambda: self.button_callback({"SEND": self.input_field.get()}, )
         )
-        self.send_button.grid(
-            row=7, column=3, padx=(10, 20), pady=(10, 20), sticky="nsew"
-        )
+        self.send_button.grid(row=7, column=3, padx=(10, 20), pady=(10, 20), sticky="nsew")
 
-        self.protocol("WM_DELETE_WINDOW", lambda: self.button_callback({"QUIT": None}, app=self))
+        self.protocol("WM_DELETE_WINDOW", lambda: self.button_callback({"QUIT": None}))
 
     def _usb_connected(self, dev: Device) -> None:
         if is_teensy_usb(dev):
@@ -183,7 +157,8 @@ class App(ctk.CTk):
         print(f"[App.update_port_list] -> {ports}")
         self.port_list.configure(values=ports)
         self.port_list.set(ports[0])
-        self.button_callback({"PORT": ports[0]}, app=self)
+        if ports[0] != "No Devices":
+            self.button_callback({"PORT": ports[0]})
 
     def responseListener(self) -> None:
         if not self.conn:
@@ -191,6 +166,7 @@ class App(ctk.CTk):
         while self.running:
             try:
                 self.response = self.conn.recv()
+                # add response processing here (e.g. parse state, updates, etc.)
             except Exception as e:
                 print(f"[App.responseListener] -> {e}")
                 continue
@@ -209,13 +185,21 @@ class App(ctk.CTk):
             self.resLT.start()
         self.mainloop()
     
-    def button_callback(self,event, app=None) -> None:
+    def button_callback(self, event) -> None:
         key, value = next(iter(event.items()))
+
+        if key in {"PORT", "CONNECT", "DISCONNECT"} and value in {"", "No Devices", None}:
+            return
 
         match key:
             case "UPLOAD":
                 file_path: str = filedialog.askopenfilename(
-                    title="Select File", filetypes=[("All Files", "*.*")]
+                    initialdir=str(traj_dir),
+                    title="Select File",
+                    filetypes=[
+                        ("CSV Files", "*.csv"),
+                        ("All Files", "*.*"),
+                    ],
                 )
                 if file_path:
                     event[key] = file_path
@@ -260,8 +244,8 @@ class App(ctk.CTk):
         # Unregister usbx callbacks (stop UI updates)
         usb.on_connected(None)
         usb.on_disconnected(None)
-
         self.destroy()
+
 if __name__ == "__main__":
     app = App(conn=None)
     app.run()
