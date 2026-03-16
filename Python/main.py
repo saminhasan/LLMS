@@ -1,10 +1,10 @@
-import os
 import logging
+import os
 from logging.handlers import RotatingFileHandler
 from multiprocessing import Pipe, Process
 from multiprocessing.connection import Connection as PipeConnection
 
-from serial_server import SerialServer
+from RobotInterface import RobotInterface, setup_logging as setup_robot_logging
 from ui import App
 
 
@@ -36,7 +36,7 @@ def clear_screen() -> None:
 
 
 def run_app(conn: PipeConnection) -> None:
-    setup_logging(level=logging.INFO, logfile="logs/app.log")
+    setup_logging(level=logging.INFO, logfile="logs/app2.log")
     log = logging.getLogger("app_process")
     try:
         App(conn=conn).run()
@@ -52,22 +52,22 @@ def run_app(conn: PipeConnection) -> None:
             log.exception("[run_app] conn.close failed")
 
 
-def run_serial_server(conn: PipeConnection) -> None:
-    setup_logging(level=logging.INFO, logfile="logs/serial_server_process.log")
-    log = logging.getLogger("ss_process")
+def run_robot_interface(conn: PipeConnection) -> None:
+    setup_robot_logging(level=logging.INFO, logfile="logs/robot_interface_process.log")
+    log = logging.getLogger("robot_interface_process")
     try:
-        ss = SerialServer(conn=conn)
-        ss.run()
-        log.info("[run_serial_server] server exited")
+        robot = RobotInterface(conn=conn)
+        robot.run()
+        log.info("[run_robot_interface] exited")
     except KeyboardInterrupt:
-        log.info("[run_serial_server] KeyboardInterrupt")
+        log.info("[run_robot_interface] KeyboardInterrupt")
     except Exception:
-        log.exception("[run_serial_server] crashed")
+        log.exception("[run_robot_interface] crashed")
     finally:
         try:
             conn.close()
         except Exception:
-            log.exception("[run_serial_server] conn.close failed")
+            log.exception("[run_robot_interface] conn.close failed")
 
 
 if __name__ == "__main__":
@@ -78,36 +78,33 @@ if __name__ == "__main__":
 
     parent_conn, child_conn = Pipe(duplex=True)
 
-    appProcess = Process(target=run_app, args=(parent_conn,), name="AppProcess")
-    ssProcess = Process(target=run_serial_server, args=(child_conn,), name="SerialServerProcess")
+    app_process = Process(target=run_app, args=(parent_conn,), name="AppProcess")
+    robot_process = Process(target=run_robot_interface, args=(child_conn,), name="RobotInterfaceProcess")
 
-    appProcess.start()
-    ssProcess.start()
+    app_process.start()
+    robot_process.start()
 
     try:
-        # Wait for the app to finish first; then tell the server to stop.
-        appProcess.join()
+        app_process.join()
 
-        if ssProcess.is_alive():
+        if robot_process.is_alive():
             try:
-                # Convention used in your server: None means shutdown + echo None back
                 parent_conn.send(None)
             except Exception:
-                log.exception("[main] failed to send shutdown to server")
+                log.exception("[main] failed to send shutdown to robot interface")
 
-            # Give server a moment to exit cleanly, then force terminate if stuck.
-            ssProcess.join(timeout=3.0)
-            if ssProcess.is_alive():
-                log.warning("[main] server did not stop; terminating")
-                ssProcess.terminate()
-                ssProcess.join()
+            robot_process.join(timeout=3.0)
+            if robot_process.is_alive():
+                log.warning("[main] robot interface did not stop; terminating")
+                robot_process.terminate()
+                robot_process.join()
 
     except KeyboardInterrupt:
         log.info("[main] KeyboardInterrupt -> terminating processes")
-        for p in (appProcess, ssProcess):
+        for p in (app_process, robot_process):
             if p.is_alive():
                 p.terminate()
-        for p in (appProcess, ssProcess):
+        for p in (app_process, robot_process):
             p.join()
 
     finally:
@@ -120,5 +117,8 @@ if __name__ == "__main__":
         except Exception:
             log.exception("[main] child_conn.close failed")
 
-        log.info("[main] processes terminated (app_exitcode=%s, ss_exitcode=%s)",
-                 appProcess.exitcode, ssProcess.exitcode)
+        log.info(
+            "[main] processes terminated (app_exitcode=%s, robot_exitcode=%s)",
+            app_process.exitcode,
+            robot_process.exitcode,
+        )

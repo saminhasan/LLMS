@@ -1,0 +1,4 @@
+2026-03-16 02:55:16,857 INFO robot_interface [RobotInterfaceProcess/MainThread]: [run] started
+2026-03-16 02:55:25,103 INFO robot_interface [RobotInterfaceProcess/MainThread]: [handler] received None -> shutdown
+2026-03-16 02:55:25,103 INFO robot_interface [RobotInterfaceProcess/MainThread]: [run] stopped
+2026-03-16 02:55:25,103 INFO robot_interface_process [RobotInterfaceProcess/MainThread]: [run_robot_interface] exited

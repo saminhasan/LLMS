@@ -1,34 +1,33 @@
+import logging
+import os
+import struct
 import time
 import zlib
-import struct
-import serial
-import numpy as np
-from more_itertools import chunked
-from threading import Thread, Event
+from datetime import datetime
 from logging.handlers import RotatingFileHandler
-import logging
+from multiprocessing.connection import Connection as PipeConnection
+from threading import Event, Thread
 
-from hexlink import Packet
+import numpy as np
+import serial
+from more_itertools import chunked
+
 from constants import *
-
-
-
-
-
+from hexlink import Packet
 
 
 def setup_logging(
     *,
     level: int = logging.INFO,
-    logfile: str | None = "hexapod.log",
+    logfile: str | None = "logs/robot_interface.log",
     max_bytes: int = 2_000_000,
     backups: int = 5,
-) -> logging.Logger:
-    fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+) -> None:
+    fmt = "%(asctime)s %(levelname)s %(name)s [%(processName)s/%(threadName)s]: %(message)s"
 
     root = logging.getLogger()
     root.setLevel(level)
-    root.handlers.clear()  # avoid duplicate handlers on reload
+    root.handlers.clear()
 
     sh = logging.StreamHandler()
     sh.setFormatter(logging.Formatter(fmt))
@@ -38,8 +37,6 @@ def setup_logging(
         fh = RotatingFileHandler(logfile, maxBytes=max_bytes, backupCount=backups, encoding="utf-8")
         fh.setFormatter(logging.Formatter(fmt))
         root.addHandler(fh)
-
-    return logging.getLogger("hexapod")
 
 
 def traj_to_bytes_le(trajectory) -> bytes:
@@ -52,13 +49,8 @@ def traj_to_bytes_le(trajectory) -> bytes:
     return bytes(b)
 
 
-import os
-from datetime import datetime
-
-
 class TelemetryRecorder:
-    """Writes raw 64-byte packets to a binary log file.
-    Start on PLAY, stop on STOP. Decode later with decode_log.py."""
+    """Writes raw 64-byte packets to a binary log file."""
 
     def __init__(self, output_dir: str = "output"):
         self.log = logging.getLogger("telem_recorder")
@@ -85,20 +77,24 @@ class TelemetryRecorder:
                 f.write(raw_pkt)
                 self._count += 1
             except ValueError:
-                pass  # file closed between check and write
+                pass
 
     def stop(self) -> None:
         f = self._file
-        self._file = None  # clear reference first so write() stops
+        self._file = None
         if f:
             f.close()
             self.log.info("[recorder] stopped, %d packets saved", self._count)
             self._count = 0
 
 
-class Hexapod:
-    def __init__(self) -> None:
-        self.log = logging.getLogger("hexapod")
+class RobotInterface:
+    """Merged replacement for serial_server + hexapod."""
+
+    def __init__(self, conn: PipeConnection) -> None:
+        self.conn = conn
+        self.running = True
+        self.log = logging.getLogger("robot_interface")
 
         self.port = serial.Serial(port=None, timeout=None)
         self.byteBuffer = bytearray()
@@ -123,9 +119,15 @@ class Hexapod:
     def is_connected(self) -> bool:
         return self.port.is_open
 
+    def _safe_send(self, msg) -> None:
+        try:
+            self.conn.send(msg)
+        except Exception:
+            self.log.exception("[pipe] send failed")
+
     def set_port(self, port: str) -> None:
         if not port:
-            self.log.warning("[set_port] Invalid port: '%s'", port)
+            self.log.warning("[set_port] Invalid port: %r", port)
             return
 
         if port != self.portStr:
@@ -156,15 +158,14 @@ class Hexapod:
 
         self.log.info("[connect] Connected to %s", self.portStr)
         self.listen.set()
-        Thread(target=self.run, daemon=True).start()
+        Thread(target=self.serial_listener, daemon=True, name="RobotSerialListener").start()
 
-    def run(self) -> None:
+    def serial_listener(self) -> None:
         self.inLoop.set()
-        self.log.debug("[run] listener started")
+        self.log.debug("[serial_listener] started")
 
         try:
             while self.listen.is_set():
-                # read at least 1 byte to block; if in_waiting has data, grab it all
                 n = max(getattr(self.port, "in_waiting", 0), 1)
                 data = self.port.read(n)
                 if not data:
@@ -174,24 +175,21 @@ class Hexapod:
                 self._consume_packets()
 
         except serial.SerialException as exc:
-            # Typical when device is unplugged or disappears while reading.
-            self.log.warning("[run] Serial link lost (%s)", exc)
+            self.log.warning("[serial_listener] Serial link lost (%s)", exc)
             self.listen.clear()
             if self.port.is_open:
                 try:
                     self.port.close()
                 except Exception:
-                    self.log.debug("[run] close after disconnect failed", exc_info=True)
+                    self.log.debug("[serial_listener] close after disconnect failed", exc_info=True)
         except Exception:
-            self.log.exception("[run] listener crashed")
+            self.log.exception("[serial_listener] crashed")
         finally:
             self.inLoop.clear()
-            self.log.debug("[run] listener stopped")
+            self.log.debug("[serial_listener] stopped")
 
     def _consume_packets(self) -> None:
-        """Extract fixed-size packets from buffer and dispatch."""
         while len(self.byteBuffer) >= PACKET_SIZE:
-            # Align to START_BYTE
             if self.byteBuffer[0] != START_BYTE:
                 del self.byteBuffer[0]
                 continue
@@ -202,11 +200,9 @@ class Hexapod:
             candidate = bytes(self.byteBuffer[:PACKET_SIZE])
 
             if candidate[-1] != END_BYTE or not Packet.validate(candidate):
-                # Drop the start byte and try to realign
                 del self.byteBuffer[0]
                 continue
 
-            # Packet is valid; remove from buffer and process
             del self.byteBuffer[:PACKET_SIZE]
             self.process_packet(candidate)
 
@@ -217,7 +213,7 @@ class Hexapod:
     def _handle_info_packet(self, pkt: bytes) -> str | None:
         seq = pkt[3]
         more = pkt[5] != 0
-        payload = pkt[6:61]  # bytes 6..60 (55-byte INFO fragment)
+        payload = pkt[6:61]
 
         if self._info_expected_seq is not None and seq != self._info_expected_seq:
             self.log.warning(
@@ -250,8 +246,6 @@ class Hexapod:
             if msg is not None:
                 self.log.info("[recv] INFO: %s", msg)
 
-
-
     def sendData(self, data: bytes) -> bool:
         if not self.is_connected:
             self.log.warning("[send] Not connected")
@@ -266,9 +260,7 @@ class Hexapod:
                 if chunk_size is None:
                     self.log.warning("[send] write returned None, stopping")
                     break
-                else:
-                    sent += chunk_size
-                # time.sleep(1e-3)
+                sent += chunk_size
 
             dt = (time.perf_counter_ns() - t0) / 1e9
 
@@ -306,8 +298,6 @@ class Hexapod:
             except Exception:
                 self.log.exception("[disconnect] Error closing %s", self.portStr)
 
-    # ---- Commands ----
-
     def enable(self) -> None:
         self.sendData(self.packet.enable())
 
@@ -339,12 +329,10 @@ class Hexapod:
             db = traj_to_bytes_le(trajectory)
             crc = zlib.crc32(db)
 
-            # Debug: print first row bytes and CRC
             self.log.info("[upload] First row bytes: %s", db[:24].hex().upper())
             self.log.info("[upload] Total bytes: %d, CRC32: 0x%08X", len(db), crc)
 
             self.validate_trajectory(crc32=crc, length=len(trajectory))
-
             self.log.info("[upload] Uploaded %s (%d points)", filename, len(trajectory))
 
         except Exception:
@@ -381,15 +369,79 @@ class Hexapod:
 
         self.sendData(self.packet.jog(positions))
 
+    def handle_request(self, request) -> bool:
+        """Returns False when caller should stop."""
+        if request is None:
+            self.log.info("[handler] received None -> shutdown")
+            self._safe_send(None)
+            return False
 
-if __name__ == "__main__":
-    setup_logging(level=logging.INFO, logfile="hexapod.log")  # set DEBUG to get more noise
+        if not isinstance(request, dict) or not request:
+            self.log.warning("[handler] invalid request: %r", request)
+            return True
 
-    hexapod = Hexapod()
-    hexapod.set_port("COM11")
-    hexapod.connect()
+        key, value = next(iter(request.items()))
+        self.log.debug("[handler] request: %s=%r", key, value)
 
-    time.sleep(10)
+        match key:
+            case "PORT":
+                self.set_port(value)
+            case "CONNECT":
+                self.connect()
+            case "DISCONNECT":
+                self.disconnect()
+            case "ENABLE":
+                self.enable()
+            case "DISABLE":
+                self.disable()
+            case "CALIBRATE":
+                self.calibrate()
+            case "STAGE":
+                self.stage()
+            case "PARK":
+                self.park()
+            case "UPLOAD":
+                self.upload(value)
+            case "VALIDATE":
+                self.validate_trajectory()
+            case "PLAY":
+                self.play()
+            case "PAUSE":
+                self.pause()
+            case "STOP":
+                self.stop()
+            case "ESTOP":
+                self.estop()
+            case "RESET":
+                self.reset()
+            case "SEND":
+                self.move(value)
+            case "QUIT":
+                self.log.info("[handler] QUIT received")
+                return False
+            case _:
+                self.log.warning("[handler] unknown request: %r", request)
 
-    hexapod.disconnect()
+        return True
 
+    def run(self) -> None:
+        self.log.info("[run] started")
+        try:
+            while self.running:
+                try:
+                    request = self.conn.recv()
+                except EOFError:
+                    self.log.warning("[run] pipe closed (EOF); stopping")
+                    break
+                except Exception:
+                    self.log.exception("[run] error receiving request")
+                    continue
+
+                try:
+                    self.running = self.handle_request(request)
+                except Exception:
+                    self.log.exception("[run] failed handling request: %r", request)
+        finally:
+            self.running = False
+            self.disconnect()
+            self.log.info("[run] stopped")

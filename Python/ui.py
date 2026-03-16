@@ -178,7 +178,7 @@ class App(ctk.CTk):
             self.after(0, lambda: self.event_generate("<<ReceivedResponse>>", when="tail"))
 
     def responseHandler(self, _event) -> None:
-        print(f"[App.responseHandler] -> response : {self.response}")
+        print(f"[App.responseHandler] -> response : {self.response} | event: {_event}")
 
     def run(self) -> None:
         if self.conn:
@@ -188,8 +188,6 @@ class App(ctk.CTk):
     def button_callback(self, event) -> None:
         key, value = next(iter(event.items()))
 
-        if key in {"PORT", "CONNECT", "DISCONNECT"} and value in {"", "No Devices", None}:
-            return
 
         match key:
             case "UPLOAD":
@@ -197,8 +195,7 @@ class App(ctk.CTk):
                     initialdir=str(traj_dir),
                     title="Select File",
                     filetypes=[
-                        ("CSV Files", "*.csv"),
-                        ("All Files", "*.*"),
+                        ("CSV Files", "*.csv")
                     ],
                 )
                 if file_path:
